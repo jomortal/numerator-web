@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Numerator</title>
+<style>
+    :root { --background: #0d0e10; --pad: #2b2f36; --lit: #4fc3f7; --text: #ffffff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: var(--background); color: var(--text);
+           font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center;
+           justify-content: center; gap: 24px; padding: 16px; user-select: none; -webkit-user-select: none; }
+    h1 { margin: 0; font-weight: 600; letter-spacing: 0.1em; }
+    #start { font-size: 1.2rem; padding: 16px 32px; border-radius: 12px; border: 0; background: var(--lit); color: #0d0e10; }
+    #pads { display: grid; grid-template-columns: repeat(4, minmax(64px, 96px)); gap: 8px; }
+    .pad { aspect-ratio: 1; border-radius: 12px; border: 1.5px solid rgba(255,255,255,0.25); background: var(--pad);
+           color: var(--text); font-size: 1.3rem; touch-action: manipulation; }
+    .pad.down { background: var(--lit); color: #0d0e10; }
+    #status { opacity: 0.6; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+    <h1>NUMERATOR</h1>
+    <button id="start">Tap to start sound</button>
+    <div id="pads" hidden></div>
+    <div id="status">Web test: Core's Sine instrument, running as WebAssembly</div>
+
+<script>
+const notes = [ ["C4", 60], ["D4", 62], ["E4", 64], ["F4", 65], ["G4", 67], ["A4", 69], ["B4", 71], ["C5", 72] ];
+let node = null;
+
+async function start()
+{
+    const context = new AudioContext();
+    const wasm = await (await fetch ("engine.wasm")).arrayBuffer();
+    await context.audioWorklet.addModule ("processor.js");
+    node = new AudioWorkletNode (context, "numerator", { outputChannelCount: [2], processorOptions: { wasm } });
+    node.connect (context.destination);
+    await context.resume();
+
+    document.getElementById ("start").hidden = true;
+    document.getElementById ("pads").hidden = false;
+}
+
+const pads = document.getElementById ("pads");
+
+for (const [name, note] of notes)
+{
+    const pad = document.createElement ("button");
+    pad.className = "pad";
+    pad.textContent = name;
+    pad.addEventListener ("pointerdown", () =>
+    {
+        pad.classList.add ("down");
+        node?.port.postMessage ({ type: "noteOn", note, velocity: 100, length: 0.6 });
+    });
+    for (const up of ["pointerup", "pointerleave", "pointercancel"])
+        pad.addEventListener (up, () => pad.classList.remove ("down"));
+    pads.appendChild (pad);
+}
+
+document.getElementById ("start").addEventListener ("click", () =>
+    start().catch (error => document.getElementById ("status").textContent = "Couldn't start: " + error));
+</script>
+</body>
+</html>
