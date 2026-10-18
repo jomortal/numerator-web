@@ -2,34 +2,42 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>Numerator</title>
 <style>
-    :root { --background: #0d0e10; --pad: #2b2f36; --lit: #4fc3f7; --text: #ffffff; }
+    :root { --background: #0d0e10; --panel: #15171b; --pad: #2b2f36; --lit: #4fc3f7; --text: #ffffff; --gap: 4px; }
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; background: var(--background); color: var(--text);
-           font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center;
-           justify-content: center; gap: 24px; padding: 16px; user-select: none; -webkit-user-select: none; }
-    h1 { margin: 0; font-weight: 600; letter-spacing: 0.1em; }
-    #start { font-size: 1.2rem; padding: 16px 32px; border-radius: 12px; border: 0; background: var(--lit); color: #0d0e10; }
-    #pads { display: grid; grid-template-columns: repeat(4, minmax(64px, 96px)); gap: 8px; }
-    .pad { aspect-ratio: 1; border-radius: 12px; border: 1.5px solid rgba(255,255,255,0.25); background: var(--pad);
-           color: var(--text); font-size: 1.3rem; touch-action: manipulation; }
-    .pad.down { background: var(--lit); color: #0d0e10; }
-    #status { opacity: 0.6; font-size: 0.9rem; }
+    html, body { margin: 0; height: 100%; background: var(--background); color: var(--text);
+                 font-family: system-ui, sans-serif; overflow: hidden; touch-action: none;
+                 user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+
+    /* Portrait: the display takes the top third, the pads the bottom two thirds. */
+    #app { height: 100dvh; display: grid; grid-template-rows: 1fr 2fr; gap: var(--gap);
+           padding: max(8px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right))
+                    max(8px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left)); }
+    #display { background: var(--panel); border-radius: 12px; display: flex; align-items: center; justify-content: center; }
+
+    /* 8 x 8: the left grid (columns 1-4) and the right grid (5-8), with a wider gap between them. */
+    #grid { display: grid; grid-template-columns: repeat(4, 1fr) 6px repeat(4, 1fr); grid-template-rows: repeat(8, 1fr); gap: var(--gap); }
+    .pad { border-radius: 10px; border: 1.5px solid rgba(255,255,255,0.25); background: var(--pad); touch-action: none; }
+    .pad.down { background: var(--lit); border-color: rgba(255,255,255,0.9); }
+
+    #start { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(13,14,16,0.9); }
+    #start button { font-size: 1.2rem; padding: 16px 32px; border-radius: 12px; border: 0; background: var(--lit); color: #0d0e10; }
 </style>
 </head>
 <body>
-    <h1>NUMERATOR</h1>
-    <button id="start">Tap to start sound</button>
-    <div id="pads" hidden></div>
-    <div id="status">Web test: Core's Sine instrument, running as WebAssembly</div>
+    <div id="app">
+        <div id="display"></div>
+        <div id="grid"></div>
+    </div>
+    <div id="start"><button>Tap to start</button></div>
 
 <script>
-const notes = [ ["C4", 60], ["D4", 62], ["E4", 64], ["F4", 65], ["G4", 67], ["A4", 69], ["B4", 71], ["C5", 72] ];
 let node = null;
 
-async function start()
+async function startAudio()
 {
     const context = new AudioContext();
     const wasm = await (await fetch ("engine.wasm")).arrayBuffer();
@@ -37,30 +45,47 @@ async function start()
     node = new AudioWorkletNode (context, "numerator", { outputChannelCount: [2], processorOptions: { wasm } });
     node.connect (context.destination);
     await context.resume();
-
-    document.getElementById ("start").hidden = true;
-    document.getElementById ("pads").hidden = false;
 }
 
-const pads = document.getElementById ("pads");
+// The 8 x 8 pads: left grid (columns 1-4) and right grid (columns 6-9 in the CSS grid, after the spacer column).
+const grid = document.getElementById ("grid");
+const scale = [0, 2, 4, 5, 7, 9, 11];
 
-for (const [name, note] of notes)
+for (let row = 0; row < 8; ++row)
 {
-    const pad = document.createElement ("button");
-    pad.className = "pad";
-    pad.textContent = name;
-    pad.addEventListener ("pointerdown", () =>
+    for (let column = 0; column < 8; ++column)
     {
-        pad.classList.add ("down");
-        node?.port.postMessage ({ type: "noteOn", note, velocity: 100, length: 0.6 });
-    });
-    for (const up of ["pointerup", "pointerleave", "pointercancel"])
-        pad.addEventListener (up, () => pad.classList.remove ("down"));
-    pads.appendChild (pad);
+        const pad = document.createElement ("div");
+        pad.className = "pad";
+        pad.style.gridRow = row + 1;
+        pad.style.gridColumn = column < 4 ? column + 1 : column + 2;
+
+        // For now, the right grid plays the sine: lowest at the bottom left, rising across and up.
+        const right = column >= 4;
+        const position = (7 - row) * 4 + (column - 4);
+        const note = 48 + 12 * Math.floor (position / 7) + scale[position % 7];
+
+        pad.addEventListener ("pointerdown", (event) =>
+        {
+            pad.setPointerCapture (event.pointerId);
+            pad.classList.add ("down");
+
+            if (right)
+                node?.port.postMessage ({ type: "noteOn", note, velocity: 100, length: 0.4 });
+        });
+
+        for (const up of ["pointerup", "pointercancel"])
+            pad.addEventListener (up, () => pad.classList.remove ("down"));
+
+        grid.appendChild (pad);
+    }
 }
 
-document.getElementById ("start").addEventListener ("click", () =>
-    start().catch (error => document.getElementById ("status").textContent = "Couldn't start: " + error));
+document.querySelector ("#start button").addEventListener ("click", async () =>
+{
+    document.getElementById ("start").remove();
+    await startAudio().catch (error => console.error (error));
+});
 </script>
 </body>
 </html>
